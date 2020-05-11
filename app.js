@@ -14,9 +14,14 @@ const session = require('express-session');
 const passport = require('passport')
 const passportLocalMongoose = require('passport-local-mongoose'); 
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
-const findOrCreate = require('mongoose-findorcreate')
+const findOrCreate = require('mongoose-findorcreate');
+const VKontakteStrategy = require('passport-vk-strategy').Strategy;
+
 
 const app = express();
+
+app.use(require('cookie-parser')());
+
 
 app.set('view engine', 'ejs');
 
@@ -40,7 +45,8 @@ mongoose.set('useCreateIndex', true);
 const userSchema = new mongoose.Schema({
     username: String,
     password: String,
-    googleId: String
+    googleId: String,
+    vkontakteId: String
 });
 
 userSchema.plugin(passportLocalMongoose);
@@ -58,11 +64,13 @@ passport.serializeUser(function(user, done) {
     done(null, user.id);
   });
   
-  passport.deserializeUser(function(id, done) {
-    User.findById(id, function(err, user) {
-      done(err, user);
-    });
-  });
+passport.deserializeUser(function(id, done) {
+User.findById(id, function(err, user) {
+    User.findById(id)
+        .then(function (user) { done(null, user); })
+        .catch(done);
+});
+});
 
 passport.use(new GoogleStrategy({
     clientID: process.env.CLIENT_ID,
@@ -76,6 +84,26 @@ passport.use(new GoogleStrategy({
     });
   }
 ));
+
+passport.use(new VKontakteStrategy(
+    {
+      clientID:     process.env.VKONTAKTE_APP_ID, // VK.com docs call it 'API ID', 'app_id', 'api_id', 'client_id' or 'apiId'
+      clientSecret: process.env.VKONTAKTE_APP_SECRET,
+      callbackURL:  "http://localhost:3000/auth/vkontakte/callback"
+    },
+    function myVerifyCallbackFn(accessToken, refreshToken, params, profile, done) {
+        console.log(profile);
+  
+      // Now that we have user's `profile` as seen by VK, we can
+      // use it to find corresponding database records on our side.
+      // Also we have user's `params` that contains email address (if set in 
+      // scope), token lifetime, etc.
+      // Here, we have a hypothetical `User` class which does what it says.
+      User.findOrCreate({ vkontakteId: profile.id })
+          .then(function (user) { done(null, user); })
+          .catch(done);
+    }
+  ));
 
 app.get('/logout', (req, res) => {
     req.logout();
@@ -92,6 +120,18 @@ app.get('/auth/google/secrets',
     // Successful authentication, redirect home.
     res.redirect('/secrets');
   });
+
+app.get('/auth/vkontakte', 
+    passport.authenticate('vkontakte', { scope: ['status', 'email', 'friends', 'notify'] }));
+
+app.get('/auth/vkontakte/callback',
+  passport.authenticate('vkontakte', {
+    successRedirect: '/secrets',
+    failureRedirect: '/login',
+    session:false
+  }),
+)
+
 
 app.route('/')
     .get((req, res) => {
