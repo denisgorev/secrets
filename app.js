@@ -39,14 +39,15 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session()); //use passport to manage session
 
-mongoose.connect('mongodb://localhost:27017/userDB', {useNewUrlParser: true, useUnifiedTopology: true});
+mongoose.connect('mongodb://localhost:27017/userDB', {useNewUrlParser: true, useUnifiedTopology: true,  useFindAndModify: false });
 mongoose.set('useCreateIndex', true);
 
 const userSchema = new mongoose.Schema({
     username: String,
     password: String,
     googleId: String,
-    vkontakteId: String
+    vkontakteId: String,
+    secret: String
 });
 
 userSchema.plugin(passportLocalMongoose);
@@ -91,19 +92,13 @@ passport.use(new VKontakteStrategy(
       clientSecret: process.env.VKONTAKTE_APP_SECRET,
       callbackURL:  "http://localhost:3000/auth/vkontakte/callback"
     },
-    function myVerifyCallbackFn(accessToken, refreshToken, params, profile, done) {
-        console.log(profile);
-  
-      // Now that we have user's `profile` as seen by VK, we can
-      // use it to find corresponding database records on our side.
-      // Also we have user's `params` that contains email address (if set in 
-      // scope), token lifetime, etc.
-      // Here, we have a hypothetical `User` class which does what it says.
-      User.findOrCreate({ vkontakteId: profile.id })
-          .then(function (user) { done(null, user); })
-          .catch(done);
-    }
-  ));
+    function(accessToken, refreshToken, params, profile, done) {
+        // console.log(params.email); // getting the email
+        User.findOrCreate({ vkontakteId: profile.id }, function (err, user) {
+          return done(err, user);
+        });
+      }
+    ));
 
 app.get('/logout', (req, res) => {
     req.logout();
@@ -122,13 +117,17 @@ app.get('/auth/google/secrets',
   });
 
 app.get('/auth/vkontakte', 
-    passport.authenticate('vkontakte', { scope: ['status', 'email', 'friends', 'notify'] }));
+    passport.authenticate('vkontakte'), 
+    function(req, res){
+        // The request will be redirected to vk.com for authentication, so
+        // this function will not be called.
+      });
 
 app.get('/auth/vkontakte/callback',
   passport.authenticate('vkontakte', {
     successRedirect: '/secrets',
     failureRedirect: '/login',
-    session:false
+    //session:false
   }),
 )
 
@@ -190,11 +189,13 @@ app.route('/login')
     });
 
 app.get('/secrets', (req, res) => {
-    if (req.isAuthenticated){
-        res.render('secrets')
-    } else {
-        res.render('login')
-    }
+    User.find({'secret':{$ne:null}}, (err, foundUsers) => {
+        if (err){
+            console.log(err);
+        } else {
+            res.render('secrets', {usersWithSecret: foundUsers})
+        }
+    })
 
 })
 app.route('/register')
@@ -236,6 +237,28 @@ app.route('/register')
         // });
 
 
+    })
+
+app.route('/submit')
+    .get((req, res) => {
+        if (req.isAuthenticated()) {
+            res.render('submit')
+        } else {
+            res.redirect('/login')
+        }
+    })
+
+    .post((req, res) => {
+        const submittedSecret = req.body.secret;
+        console.log(req.user);
+        User.findOneAndUpdate({_id: req.user._id}, {secret: submittedSecret}, {new: true}, (err, doc) => {
+            if(err){
+                console.log(err)
+            } else {
+                console.log(doc);
+                res.redirect('/secrets');
+            }
+        })
     })
 
 
